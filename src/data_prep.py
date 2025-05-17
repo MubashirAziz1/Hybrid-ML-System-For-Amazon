@@ -1,138 +1,112 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 import re
 import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import os
-import kaggle
-from pathlib import Path
 
 # Download required NLTK data
-nltk.download('punkt')
-nltk.download('stopwords')
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
 
 def download_kaggle_dataset():
-    """Download the dataset from Kaggle if not present."""
-    data_dir = Path('data')
-    data_file = data_dir / 'Amazon_Unlocked_Mobile.csv'
-    
-    if not data_file.exists():
-        print("Dataset not found. Downloading from Kaggle...")
-        try:
-            # Create data directory if it doesn't exist
-            data_dir.mkdir(exist_ok=True)
-            
-            # Download dataset
+    """Download dataset from Kaggle if kaggle.json is present."""
+    try:
+        import kaggle
+        # Check if dataset is already downloaded
+        if not os.path.exists('data/Amazon_Unlocked_Mobile.csv'):
+            print("Downloading dataset from Kaggle...")
             kaggle.api.dataset_download_files(
                 'PromptCloudHQ/amazon-reviews-unlocked-mobile-phones',
                 path='data',
                 unzip=True
             )
             print("Dataset downloaded successfully!")
-        except Exception as e:
-            print(f"Error downloading dataset: {str(e)}")
-            print("\nPlease download the dataset manually from:")
-            print("https://www.kaggle.com/datasets/PromptCloudHQ/amazon-reviews-unlocked-mobile-phones")
-            print("\nAnd place it in the 'data' directory as 'Amazon_Unlocked_Mobile.csv'")
-            raise
+        return True
+    except Exception as e:
+        print(f"Could not download from Kaggle: {str(e)}")
+        print("Please ensure you have:")
+        print("1. A kaggle.json file in ~/.kaggle/")
+        print("2. The dataset 'PromptCloudHQ/amazon-reviews-unlocked-mobile-phones' is accessible")
+        return False
 
-def load_and_sample_data(file_path, sample_size=1000):
-    """Load data and take a sample for initial testing."""
+def load_data(file_path, sample_size=None):
+    """Load data from local file."""
+    print(f"Loading data from {file_path}...")
     try:
         df = pd.read_csv(file_path)
-        print(f"Loaded dataset with {len(df)} rows")
-        return df.sample(n=min(sample_size, len(df)), random_state=42)
-    except FileNotFoundError:
-        print(f"Error: Could not find data file at {file_path}")
-        print("Attempting to download from Kaggle...")
-        download_kaggle_dataset()
-        # Try loading again after download
-        df = pd.read_csv(file_path)
-        return df.sample(n=min(sample_size, len(df)), random_state=42)
+        if sample_size:
+            df = df.sample(n=sample_size, random_state=42)
+        return df
     except Exception as e:
         print(f"Error loading data: {str(e)}")
-        raise
+        return None
 
 def clean_text(text):
     """Clean and preprocess text data."""
-    if not isinstance(text, str):
-        return ""
-    
-    # Convert to lowercase
-    text = text.lower()
-    
-    # Remove special characters and digits
-    text = re.sub(r'[^a-zA-Z\s]', '', text)
-    
-    # Remove extra whitespace
-    text = ' '.join(text.split())
-    
-    return text
+    if isinstance(text, str):
+        # Convert to lowercase
+        text = text.lower()
+        # Remove special characters and digits
+        text = re.sub(r'[^a-zA-Z\s]', '', text)
+        # Remove extra whitespace
+        text = ' '.join(text.split())
+        return text
+    return ''
 
-def extract_features(df):
-    """Extract features from the dataset."""
-    # Clean text
-    df['cleaned_review'] = df['Reviews'].apply(clean_text)
+def prepare_data(data_path='data/Amazon_Unlocked_Mobile.csv', sample_size=1000):
+    """
+    Prepare data for model training.
     
-    # Create return risk label
-    return_keywords = ['return', 'defective', 'broken', 'damaged', 'not working', 'poor quality']
-    df['return_risk'] = df.apply(lambda x: 1 if (
-        x['Rating'] <= 2 or 
-        any(keyword in x['cleaned_review'].lower() for keyword in return_keywords)
-    ) else 0, axis=1)
+    Args:
+        data_path (str): Path to the data file
+        sample_size (int): Number of samples to use (None for all data)
     
-    # Extract text length as a feature
-    df['review_length'] = df['cleaned_review'].apply(len)
-    
-    # Normalize price
-    df['normalized_price'] = (df['Price'] - df['Price'].mean()) / df['Price'].std()
-    
-    return df
-
-def prepare_data(file_path='data/Amazon_Unlocked_Mobile.csv', test_size=0.2, sample_size=1000):
-    """Main function to prepare the data."""
-    # Ensure data file exists
-    if not os.path.exists(file_path):
+    Returns:
+        tuple: (X_train, X_test, y_train, y_test, df)
+    """
+    # Try to download from Kaggle first
+    if not os.path.exists(data_path):
         download_kaggle_dataset()
     
-    # Load and sample data
-    df = load_and_sample_data(file_path, sample_size)
+    # Load data
+    df = load_data(data_path, sample_size)
+    if df is None:
+        raise FileNotFoundError(f"Could not load data from {data_path}")
     
-    # Extract features
-    df = extract_features(df)
+    print("Preprocessing data...")
+    # Clean text data
+    df['cleaned_review'] = df['Reviews'].apply(clean_text)
     
-    # Split features and target
-    X = df[['cleaned_review', 'Rating', 'normalized_price', 'review_length']]
+    # Create target variable (example: return risk based on rating)
+    df['return_risk'] = (df['Rating'] <= 3).astype(int)
+    
+    # Prepare features
+    X = df[['cleaned_review', 'Rating', 'Price']]
     y = df['return_risk']
     
-    # Split into train and test sets
+    # Split data
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=42
+        X, y, test_size=0.2, random_state=42
     )
     
+    print("Data preparation complete!")
     return X_train, X_test, y_train, y_test, df
 
 if __name__ == "__main__":
-    # Test the data preparation
+    # Test data preparation
     try:
-        X_train, X_test, y_train, y_test, df = prepare_data(
-            sample_size=1000
-        )
-        
-        print("\nData preparation completed!")
+        X_train, X_test, y_train, y_test, df = prepare_data()
         print(f"Training set size: {len(X_train)}")
         print(f"Test set size: {len(X_test)}")
-        print(f"Return risk distribution: {df['return_risk'].value_counts(normalize=True)}")
-        
-        # Display sample of processed data
-        print("\nSample of processed data:")
-        print(df[['Reviews', 'Rating', 'Price', 'return_risk']].head())
-        
     except Exception as e:
-        print(f"Error during data preparation: {str(e)}")
-        print("\nPlease ensure you have:")
-        print("1. Installed the Kaggle API: pip install kaggle")
-        print("2. Configured your Kaggle credentials")
-        print("3. Or manually downloaded the dataset to the 'data' directory") 
+        print(f"Error in data preparation: {str(e)}") 
