@@ -3,38 +3,40 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from data_prep import prepare_data
-from text_model import TextModel
-from tabular_model import TabularModel
-from hybrid_model import HybridPredictor
-import shap
-import matplotlib.pyplot as plt
+import joblib
 import os
 
-def load_data_and_models():
-    """Load data and train models."""
-    X_train, X_test, y_train, y_test, df = prepare_data(
-        'data/Amazon_Unlocked_Mobile.csv',
-        sample_size=1000
-    )
+def load_models_and_data():
+    """Load trained models and data from disk."""
+    if not os.path.exists('models'):
+        raise FileNotFoundError(
+            "Models directory not found. Please run train_models.py first to train and save the models."
+        )
     
-    # Initialize models
-    text_model = TextModel()
-    tabular_model = TabularModel()
-    hybrid_model = HybridPredictor()
+    # Load models
+    text_model = joblib.load('models/text_model.joblib')
+    tabular_model = joblib.load('models/tabular_model.joblib')
+    hybrid_model = joblib.load('models/hybrid_model.joblib')
     
-    # Train models
-    text_model.train(text_model.prepare_data(X_train, y_train, X_test, y_test)[0])
-    tabular_model.train(X_train, y_train)
-    hybrid_model.train(X_train, y_train, X_test, y_test)
+    # Load test data and metrics
+    test_data = joblib.load('models/test_data.joblib')
+    metrics = joblib.load('models/model_metrics.joblib')
     
-    return X_train, X_test, y_train, y_test, df, text_model, tabular_model, hybrid_model
+    return text_model, tabular_model, hybrid_model, test_data, metrics
 
-def create_model_comparison_plot(text_metrics, tabular_metrics, hybrid_metrics):
+def create_model_comparison_plot(metrics):
     """Create a comparison plot of model performances."""
     models = ['Text Model', 'Tabular Model', 'Hybrid Model']
-    f1_scores = [text_metrics['f1_score'], tabular_metrics['f1_score'], hybrid_metrics['f1_score']]
-    accuracies = [text_metrics['accuracy'], tabular_metrics['accuracy'], hybrid_metrics['accuracy']]
+    f1_scores = [
+        metrics['text_metrics']['f1_score'],
+        metrics['tabular_metrics']['f1_score'],
+        metrics['hybrid_metrics']['f1_score']
+    ]
+    accuracies = [
+        metrics['text_metrics']['accuracy'],
+        metrics['tabular_metrics']['accuracy'],
+        metrics['hybrid_metrics']['accuracy']
+    ]
     
     fig = go.Figure(data=[
         go.Bar(name='F1 Score', x=models, y=f1_scores),
@@ -108,14 +110,11 @@ def create_data_overview(df):
     
     return rating_fig, price_fig
 
-# Load data and models
-print("Loading data and training models...")
-X_train, X_test, y_train, y_test, df, text_model, tabular_model, hybrid_model = load_data_and_models()
-
-# Get model metrics
-text_metrics = text_model.evaluate(text_model.prepare_data(X_train, y_train, X_test, y_test)[1])
-tabular_metrics = tabular_model.evaluate(X_test, y_test)
-hybrid_metrics = hybrid_model.evaluate(X_test, y_test)
+# Load models and data
+print("Loading models and data...")
+text_model, tabular_model, hybrid_model, test_data, metrics = load_models_and_data()
+X_test = test_data['X_test']
+df = test_data['df']
 
 # Create Gradio interface
 with gr.Blocks(title="Amazon Return Risk Predictor") as demo:
@@ -124,7 +123,7 @@ with gr.Blocks(title="Amazon Return Risk Predictor") as demo:
     
     with gr.Tab("Model Performance"):
         gr.Markdown("## Model Performance Comparison")
-        model_comparison = create_model_comparison_plot(text_metrics, tabular_metrics, hybrid_metrics)
+        model_comparison = create_model_comparison_plot(metrics)
         gr.Plot(model_comparison)
         
         gr.Markdown("## Feature Importance")

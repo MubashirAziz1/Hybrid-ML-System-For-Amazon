@@ -33,25 +33,20 @@ ENV/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-notebooks/
+*.ipynb
 
-# Data files
-*.csv
-*.dat
-*.out
-*.pid
-*.gz
-*.zip
-
-# Model files
+# Data and Models
+data/
+models/
+*.joblib
 *.pkl
 *.h5
-*.pt
-*.pth
+*.model
 
 # Logs
 *.log
+logs/
 
-# OS specific
+# OS
 .DS_Store
 Thumbs.db 
