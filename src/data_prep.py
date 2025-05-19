@@ -30,7 +30,7 @@ def clean_text(text):
         return text
     return ''
 
-def prepare_data(data_path='Amazon_reviews.csv', sample_size=10000):
+def prepare_data(data_path='/kaggle/working/Amazon.txt', sample_size=10000):
     """
     Load and prepare the dataset for model training.
     
