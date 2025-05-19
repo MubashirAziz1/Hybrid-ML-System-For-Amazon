@@ -3,10 +3,11 @@ import numpy as np
 import joblib
 import os
 import shutil
+import json
 from data_prep import prepare_data
 from text_model import TextModel
 from tabular_model import TabularModel
-from hybrid_model import HybridPredictor
+from hybrid_model import HybridModel
 
 def train_and_save_models(sample_size=1000):
     """
@@ -21,68 +22,52 @@ def train_and_save_models(sample_size=1000):
             data_path='Amazon_reviews.csv',
             sample_size=sample_size
         )
-    except Exception as e:
-        print(f"Error preparing data: {str(e)}")
-        return
-    
-    # Create models directory if it doesn't exist
-    os.makedirs('models', exist_ok=True)
-    
-    try:
+        
+        # Create models directory if it doesn't exist
+        os.makedirs('models', exist_ok=True)
+        
+        # Train and save tabular model
+        print("\nTraining tabular model...")
+        tabular_model = TabularModel()
+        tabular_model.train(X_train, y_train)
+        tabular_model.save('models/tabular_model.joblib')
+        
         # Train and save text model
         print("\nTraining text model...")
         text_model = TextModel()
-        text_model.train(text_model.prepare_data(X_train, y_train, X_test, y_test)[0])
-        joblib.dump(text_model, 'models/text_model.joblib')
-        
-        # Train and save tabular model
-        print("Training tabular model...")
-        tabular_model = TabularModel()
-        tabular_model.train(X_train, y_train)
-        joblib.dump(tabular_model, 'models/tabular_model.joblib')
+        text_model.train(X_train, y_train)
+        text_model.save('models/text_model.joblib')
         
         # Train and save hybrid model
-        print("Training hybrid model...")
-        hybrid_model = HybridPredictor()
-        hybrid_model.train(X_train, y_train, X_test, y_test)
-        joblib.dump(hybrid_model, 'models/hybrid_model.joblib')
+        print("\nTraining hybrid model...")
+        hybrid_model = HybridModel()
+        hybrid_model.train(X_train, y_train, tabular_model, text_model)
+        hybrid_model.save('models/hybrid_model.joblib')
         
-        # Save test data for evaluation
-        print("Saving test data...")
-        test_data = {
-            'X_test': X_test,
-            'y_test': y_test,
-            'df': df
-        }
-        joblib.dump(test_data, 'models/test_data.joblib')
-        
-        # Calculate and save model metrics
-        print("Calculating model metrics...")
-        text_metrics = text_model.evaluate(text_model.prepare_data(X_train, y_train, X_test, y_test)[1])
-        tabular_metrics = tabular_model.evaluate(X_test, y_test)
-        hybrid_metrics = hybrid_model.evaluate(X_test, y_test)
-        
+        # Calculate and save metrics
+        print("\nCalculating metrics...")
         metrics = {
-            'text_metrics': text_metrics,
-            'tabular_metrics': tabular_metrics,
-            'hybrid_metrics': hybrid_metrics
+            'tabular': tabular_model.evaluate(X_test, y_test),
+            'text': text_model.evaluate(X_test, y_test),
+            'hybrid': hybrid_model.evaluate(X_test, y_test, tabular_model, text_model)
         }
-        joblib.dump(metrics, 'models/model_metrics.joblib')
         
-        print("\nTraining complete! All models and metrics have been saved to the 'models' directory.")
+        # Save metrics
+        with open('models/metrics.json', 'w') as f:
+            json.dump(metrics, f, indent=4)
+        
+        print("\nTraining complete! Models and metrics saved to 'models/' directory.")
+        
+        # Print performance summary
         print("\nModel Performance Summary:")
-        print(f"Text Model - F1 Score: {text_metrics['f1_score']:.3f}, Accuracy: {text_metrics['accuracy']:.3f}")
-        print(f"Tabular Model - F1 Score: {tabular_metrics['f1_score']:.3f}, Accuracy: {tabular_metrics['accuracy']:.3f}")
-        print(f"Hybrid Model - F1 Score: {hybrid_metrics['f1_score']:.3f}, Accuracy: {hybrid_metrics['accuracy']:.3f}")
-        
-        # Create a zip file of the models directory for easy download
-        print("\nCreating models.zip for download...")
-        shutil.make_archive('models', 'zip', 'models')
-        print("models.zip created successfully!")
+        for model_name, model_metrics in metrics.items():
+            print(f"\n{model_name.upper()} Model:")
+            for metric, value in model_metrics.items():
+                print(f"{metric}: {value:.4f}")
         
     except Exception as e:
-        print(f"Error during model training: {str(e)}")
-        print("Please check your data and model configurations.")
+        print(f"Error in training: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     train_and_save_models() 

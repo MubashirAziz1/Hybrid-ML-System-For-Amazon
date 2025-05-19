@@ -1,8 +1,9 @@
 import xgboost as xgb
 import numpy as np
-from sklearn.metrics import f1_score, accuracy_score
+from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score, roc_auc_score
 import pandas as pd
 import shap
+import joblib
 
 class TabularModel:
     def __init__(self):
@@ -12,49 +13,85 @@ class TabularModel:
             max_depth=5,
             random_state=42
         )
-        self.feature_names = ['Rating', 'normalized_price', 'review_length']
+        self.tabular_features = ['normalized_price', 'review_length', 'Rating']
 
-    def prepare_features(self, X):
-        """Prepare tabular features for the model."""
-        return X[self.feature_names]
-
-    def train(self, X_train, y_train):
-        """Train the XGBoost model."""
-        X_train_features = self.prepare_features(X_train)
-        self.model.fit(X_train_features, y_train)
-
-    def evaluate(self, X_test, y_test):
-        """Evaluate the model performance."""
-        X_test_features = self.prepare_features(X_test)
-        predictions = self.model.predict(X_test_features)
+    def train(self, X, y):
+        """
+        Train the tabular model using numerical features.
         
-        f1 = f1_score(y_test, predictions)
-        accuracy = accuracy_score(y_test, predictions)
+        Args:
+            X (pd.DataFrame): Input features including both text and numerical features
+            y (pd.Series): Target variable
+        """
+        # Select only tabular features
+        X_tabular = X[self.tabular_features]
+        self.model.fit(X_tabular, y)
+
+    def predict(self, X):
+        """
+        Make predictions using the tabular model.
+        
+        Args:
+            X (pd.DataFrame): Input features including both text and numerical features
+            
+        Returns:
+            np.array: Predicted probabilities
+        """
+        # Select only tabular features
+        X_tabular = X[self.tabular_features]
+        return self.model.predict_proba(X_tabular)[:, 1]
+
+    def evaluate(self, X, y):
+        """
+        Evaluate the model performance.
+        
+        Args:
+            X (pd.DataFrame): Input features including both text and numerical features
+            y (pd.Series): True labels
+            
+        Returns:
+            dict: Dictionary containing evaluation metrics
+        """
+        # Select only tabular features
+        X_tabular = X[self.tabular_features]
+        y_pred = self.model.predict(X_tabular)
+        y_pred_proba = self.model.predict_proba(X_tabular)[:, 1]
         
         return {
-            'f1_score': f1,
-            'accuracy': accuracy,
-            'predictions': predictions
+            'accuracy': accuracy_score(y, y_pred),
+            'precision': precision_score(y, y_pred),
+            'recall': recall_score(y, y_pred),
+            'f1_score': f1_score(y, y_pred),
+            'roc_auc': roc_auc_score(y, y_pred_proba)
         }
+
+    def save(self, path):
+        """Save the model to disk."""
+        model_state = {
+            'model': self.model,
+            'tabular_features': self.tabular_features
+        }
+        joblib.dump(model_state, path, protocol=4)
+
+    def load(self, path):
+        """Load the model from disk."""
+        model_state = joblib.load(path)
+        self.model = model_state['model']
+        self.tabular_features = model_state['tabular_features']
 
     def get_feature_importance(self, X):
         """Get feature importance using SHAP values."""
-        X_features = self.prepare_features(X)
+        X_features = X[self.tabular_features]
         explainer = shap.TreeExplainer(self.model)
         shap_values = explainer.shap_values(X_features)
         
         # Calculate mean absolute SHAP values for each feature
         feature_importance = pd.DataFrame({
-            'feature': self.feature_names,
+            'feature': self.tabular_features,
             'importance': np.abs(shap_values).mean(axis=0)
         })
         
         return feature_importance.sort_values('importance', ascending=False)
-
-    def predict(self, X):
-        """Make predictions for new data."""
-        X_features = self.prepare_features(X)
-        return self.model.predict_proba(X_features)
 
 if __name__ == "__main__":
     from data_prep import prepare_data

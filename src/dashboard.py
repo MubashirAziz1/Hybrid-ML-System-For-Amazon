@@ -5,24 +5,30 @@ import plotly.express as px
 import plotly.graph_objects as go
 import joblib
 import os
+from text_model import TextModel
+from tabular_model import TabularModel
+from hybrid_model import HybridModel
+import json
 
-def load_models_and_data():
-    """Load trained models and data from disk."""
-    if not os.path.exists('models'):
-        raise FileNotFoundError(
-            "Models directory not found. Please run train_models.py first to train and save the models."
-        )
-    
-    # Load models
-    text_model = joblib.load('models/text_model.joblib')
-    tabular_model = joblib.load('models/tabular_model.joblib')
-    hybrid_model = joblib.load('models/hybrid_model.joblib')
-    
-    # Load test data and metrics
-    test_data = joblib.load('models/test_data.joblib')
-    metrics = joblib.load('models/model_metrics.joblib')
-    
-    return text_model, tabular_model, hybrid_model, test_data, metrics
+def load_models():
+    """Load all trained models."""
+    try:
+        # Load text model
+        text_model = TextModel()
+        text_model.load('models/text_model.pt')
+        
+        # Load tabular model
+        tabular_model = TabularModel()
+        tabular_model.load('models/tabular_model.joblib')
+        
+        # Load hybrid model
+        hybrid_model = HybridModel()
+        hybrid_model.load('models/hybrid_model.joblib')
+        
+        return text_model, tabular_model, hybrid_model
+    except Exception as e:
+        print(f"Error loading models: {str(e)}")
+        return None, None, None
 
 def create_model_comparison_plot(metrics):
     """Create a comparison plot of model performances."""
@@ -65,40 +71,30 @@ def create_feature_importance_plot(model, X_test):
     
     return fig
 
-def predict_return_risk(review_text, rating, price):
-    """Make predictions using the hybrid model."""
-    # Prepare input data
-    input_data = pd.DataFrame({
-        'cleaned_review': [review_text],
-        'Rating': [rating],
-        'Price': [price]
-    })
-    
-    # Get predictions
-    hybrid_prob = hybrid_model.predict(input_data)[0][1]
-    
-    # Create gauge chart
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=hybrid_prob * 100,
-        title={'text': "Return Risk Score"},
-        gauge={
-            'axis': {'range': [0, 100]},
-            'bar': {'color': "darkblue"},
-            'steps': [
-                {'range': [0, 30], 'color': "lightgray"},
-                {'range': [30, 70], 'color': "gray"},
-                {'range': [70, 100], 'color': "darkgray"}
-            ],
-            'threshold': {
-                'line': {'color': "red", 'width': 4},
-                'thickness': 0.75,
-                'value': 70
-            }
-        }
-    ))
-    
-    return f"Return Risk Probability: {hybrid_prob:.2%}", fig
+def predict_return_risk(review_text, price, rating, model_type):
+    """Predict return risk using the selected model."""
+    try:
+        # Create input DataFrame
+        input_data = pd.DataFrame({
+            'cleaned_review': [review_text],
+            'normalized_price': [price],
+            'Rating': [rating],
+            'review_length': [len(review_text)]
+        })
+        
+        # Get prediction based on model type
+        if model_type == "Text Model":
+            prob = text_model.predict(input_data)[0]
+        elif model_type == "Tabular Model":
+            prob = tabular_model.predict(input_data)[0]
+        else:  # Hybrid Model
+            prob = hybrid_model.predict(input_data, tabular_model, text_model)[0]
+        
+        # Format prediction
+        risk_level = "High" if prob > 0.7 else "Medium" if prob > 0.3 else "Low"
+        return f"Return Risk: {risk_level} ({prob:.2%})"
+    except Exception as e:
+        return f"Error making prediction: {str(e)}"
 
 def create_data_overview(df):
     """Create data overview plots."""
@@ -110,67 +106,36 @@ def create_data_overview(df):
     
     return rating_fig, price_fig
 
-# Load models and data
-print("Loading models and data...")
-text_model, tabular_model, hybrid_model, test_data, metrics = load_models_and_data()
-X_test = test_data['X_test']
-df = test_data['df']
-
-# Create Gradio interface
-with gr.Blocks(title="Amazon Return Risk Predictor") as demo:
-    gr.Markdown("# Amazon Return Risk Predictor")
-    gr.Markdown("This dashboard showcases the performance of our hybrid model for predicting product return risk based on Amazon reviews.")
+def create_dashboard():
+    """Create the Gradio interface."""
+    # Load models
+    global text_model, tabular_model, hybrid_model
+    text_model, tabular_model, hybrid_model = load_models()
     
-    with gr.Tab("Model Performance"):
-        gr.Markdown("## Model Performance Comparison")
-        model_comparison = create_model_comparison_plot(metrics)
-        gr.Plot(model_comparison)
-        
-        gr.Markdown("## Feature Importance")
-        feature_importance = create_feature_importance_plot(tabular_model, X_test)
-        gr.Plot(feature_importance)
-    
-    with gr.Tab("Make Predictions"):
-        gr.Markdown("## Predict Return Risk")
-        with gr.Row():
-            with gr.Column():
-                review_input = gr.Textbox(
-                    label="Product Review",
-                    placeholder="Enter the product review here...",
-                    lines=5
-                )
-                rating_input = gr.Slider(
-                    minimum=1,
-                    maximum=5,
-                    value=3,
-                    step=1,
-                    label="Product Rating"
-                )
-                price_input = gr.Number(
-                    label="Product Price ($)",
-                    value=100.0
-                )
-                predict_btn = gr.Button("Predict Return Risk")
-            
-            with gr.Column():
-                result_text = gr.Textbox(label="Prediction Result")
-                result_plot = gr.Plot(label="Risk Score Gauge")
-        
-        predict_btn.click(
-            fn=predict_return_risk,
-            inputs=[review_input, rating_input, price_input],
-            outputs=[result_text, result_plot]
+    if text_model is None or tabular_model is None or hybrid_model is None:
+        return gr.Interface(
+            fn=lambda x: "Error: Models could not be loaded. Please ensure models are trained first.",
+            inputs=gr.Textbox(label="Error"),
+            outputs=gr.Textbox(label="Status")
         )
     
-    with gr.Tab("Data Overview"):
-        gr.Markdown("## Data Overview")
-        rating_fig, price_fig = create_data_overview(df)
-        gr.Plot(rating_fig)
-        gr.Plot(price_fig)
-        
-        gr.Markdown("## Sample Reviews")
-        sample_data = df[['Reviews', 'Rating', 'Price', 'return_risk']].head()
-        gr.Dataframe(sample_data)
+    # Create interface
+    interface = gr.Interface(
+        fn=predict_return_risk,
+        inputs=[
+            gr.Textbox(label="Review Text"),
+            gr.Number(label="Price"),
+            gr.Number(label="Rating (1-5)"),
+            gr.Radio(["Text Model", "Tabular Model", "Hybrid Model"], label="Model Type")
+        ],
+        outputs=gr.Textbox(label="Prediction"),
+        title="Amazon Review Return Risk Predictor",
+        description="Enter a review and product details to predict return risk."
+    )
+    
+    return interface
 
 if __name__ == "__main__":
-    demo.launch(share=True) 
+    # Create and launch dashboard
+    dashboard = create_dashboard()
+    dashboard.launch() 
